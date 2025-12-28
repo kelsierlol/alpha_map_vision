@@ -120,10 +120,10 @@ def apply_blur_patch(x: torch.Tensor, top: int, left: int, size: int) -> torch.T
 def corrupt_batch(
     x: torch.Tensor,
     rng: torch.Generator,
-    occlusion_size: int = 10,
-    blur_size: int = 8,
-    sp_size: int = 6,
-    copy_size: int = 8,
+    occlusion_size: int = 16,
+    blur_size: int = 12,
+    sp_size: int = 8,
+    copy_size: int = 12,
     modes: Tuple[str, ...] | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     bsz, _, h, w = x.shape

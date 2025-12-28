@@ -17,12 +17,11 @@ class AlphaHead2D(nn.Module):
     def __init__(self, in_ch: int = 1):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(in_ch, 32, 3, padding=1),
+            nn.Conv2d(in_ch, 64, 3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 32, 3, padding=1),
+            nn.Conv2d(64, 64, 3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 1, 1),
-            nn.Sigmoid(),
+            nn.Conv2d(64, 1, 1),
         )
 
     def forward(self, resid_mag: torch.Tensor) -> torch.Tensor:
@@ -107,6 +106,9 @@ def main() -> None:
     parser.add_argument("--lr-unet", type=float, default=1e-3)
     parser.add_argument("--lr-alpha", type=float, default=5e-4)
     parser.add_argument("--alpha-target", type=str, default="mask", choices=["mask", "residual"])
+    parser.add_argument("--train-modes", type=str, default="occlusion", help="comma list")
+    parser.add_argument("--eval-modes", type=str, default="occlusion,blur,saltpepper,copy", help="comma list")
+    parser.add_argument("--residual-target", type=str, default="clean", choices=["clean", "input"])
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--save-weights", action="store_true")
     parser.add_argument("--weights-dir", type=str, default="weights_twophase")
@@ -152,23 +154,31 @@ def main() -> None:
     opt_alpha = torch.optim.Adam(alpha_head.parameters(), lr=args.lr_alpha)
     alpha_head.train()
     rng = torch.Generator(device=device).manual_seed(args.seed + 1)
+    train_modes = tuple(m.strip() for m in args.train_modes.split(",") if m.strip())
+    eval_modes = tuple(m.strip() for m in args.eval_modes.split(",") if m.strip())
 
     for epoch in range(1, args.epochs_alpha + 1):
         total = 0.0
         for x, _ in loader:
             x = x.to(device)
-            corrupt, mask = corrupt_batch(x, rng)
+            corrupt, mask = corrupt_batch(x, rng, modes=train_modes)
+            x_in = corrupt
             with torch.no_grad():
-                recon = model(corrupt)
-            resid = (recon - corrupt).pow(2).mean(dim=1, keepdim=True).detach()
+                recon = model(x_in)
+            target = x if args.residual_target == "clean" else x_in
+            resid = (recon - target).pow(2).mean(dim=1, keepdim=True).detach()
 
             if args.alpha_target == "mask":
-                target = (1.0 - mask)
+                target_mask = mask
+                logits = alpha_head(resid)
+                pos = target_mask.sum()
+                neg = target_mask.numel() - pos
+                pos_weight = (neg / (pos + 1e-6)).clamp(min=1.0)
+                loss = F.binary_cross_entropy_with_logits(logits, target_mask, pos_weight=pos_weight)
             else:
                 target = 1.0 - norm01(resid)
-
-            pred = alpha_head(resid)
-            loss = F.mse_loss(pred, target)
+                pred = torch.sigmoid(alpha_head(resid))
+                loss = F.mse_loss(pred, target)
             opt_alpha.zero_grad(set_to_none=True)
             loss.backward()
             opt_alpha.step()
@@ -192,8 +202,10 @@ def main() -> None:
         corrupt, mask = corrupt_batch(x, rng)
         with torch.no_grad():
             recon = model(corrupt)
-            resid = (recon - corrupt).pow(2).mean(dim=1, keepdim=True)
-            alpha = alpha_head(resid)
+            target = x if args.residual_target == "clean" else corrupt
+            resid = (recon - target).pow(2).mean(dim=1, keepdim=True)
+            logits = alpha_head(resid)
+            alpha = torch.sigmoid(logits)
 
         os.makedirs(args.output_dir, exist_ok=True)
         img = corrupt[0].permute(1, 2, 0).cpu().numpy()
@@ -227,12 +239,13 @@ def main() -> None:
         if i >= args.eval_batches:
             break
         x = x.to(device)
-        corrupt, mask = corrupt_batch(x, rng)
+        corrupt, mask = corrupt_batch(x, rng, modes=eval_modes)
         with torch.no_grad():
             recon = model(corrupt)
-            resid = (recon - corrupt).pow(2).mean(dim=1, keepdim=True)
-            alpha = alpha_head(resid)
-        score_map = (1.0 - alpha).detach()
+            target = x if args.residual_target == "clean" else corrupt
+            resid = (recon - target).pow(2).mean(dim=1, keepdim=True)
+            logits = alpha_head(resid)
+            score_map = torch.sigmoid(logits)
         score = score_map.cpu().numpy().reshape(-1)
         scores.append(score)
         labels.append(mask.cpu().numpy().reshape(-1))
