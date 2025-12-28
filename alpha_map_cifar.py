@@ -228,8 +228,8 @@ def main() -> None:
             corrupt, mask = corrupt_batch(x, rng)
             with torch.no_grad():
                 recon = model(corrupt)
-            resid = (recon - corrupt).abs().detach()
-            redundancy = local_redundancy(corrupt, args.redundancy_window).detach()
+            resid = (recon - corrupt).abs().mean(dim=1, keepdim=True).detach()
+            redundancy = local_redundancy(corrupt, args.redundancy_window).mean(dim=1, keepdim=True).detach()
             alpha = controller(resid, redundancy)
 
             score = torch.sigmoid(-(alpha - controller.alpha0) / 0.2)
@@ -252,8 +252,8 @@ def main() -> None:
             x = x.to(device)
             corrupt, mask = corrupt_batch(x, rng)
             recon = model(corrupt)
-            resid = (recon - corrupt).abs()
-            redundancy = local_redundancy(corrupt, args.redundancy_window)
+            resid = (recon - corrupt).abs().mean(dim=1, keepdim=True)
+            redundancy = local_redundancy(corrupt, args.redundancy_window).mean(dim=1, keepdim=True)
             alpha = controller(resid, redundancy)
             score = (-(alpha - controller.alpha0)).cpu().numpy().reshape(-1)
             scores.append(score)
@@ -273,8 +273,8 @@ def main() -> None:
         corrupt, mask = corrupt_batch(x, rng)
         with torch.no_grad():
             recon = model(corrupt)
-            resid = (recon - corrupt).abs()
-            redundancy = local_redundancy(corrupt, args.redundancy_window)
+            resid = (recon - corrupt).abs().mean(dim=1, keepdim=True)
+            redundancy = local_redundancy(corrupt, args.redundancy_window).mean(dim=1, keepdim=True)
             alpha = controller(resid, redundancy)
 
         os.makedirs(args.output_dir, exist_ok=True)
