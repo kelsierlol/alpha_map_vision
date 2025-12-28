@@ -130,39 +130,49 @@ def corrupt_batch(
     mask = torch.zeros((bsz, 1, h, w), device=x.device)
     corrupted = x.clone()
 
+    def rand(shape, device):
+        if rng is not None and device.type == "cpu":
+            return torch.rand(shape, generator=rng, device=device)
+        return torch.rand(shape, device=device)
+
+    def randint(low, high):
+        if rng is not None:
+            return torch.randint(low, high, (1,), generator=rng, device="cpu").item()
+        return torch.randint(low, high, (1,), device="cpu").item()
+
     if modes is None:
         modes = ("occlusion", "blur", "saltpepper", "copy")
 
     for i in range(bsz):
         # Occlusion square
         if "occlusion" in modes:
-            top = torch.randint(0, h - occlusion_size, (1,), generator=rng).item()
-            left = torch.randint(0, w - occlusion_size, (1,), generator=rng).item()
+            top = randint(0, h - occlusion_size)
+            left = randint(0, w - occlusion_size)
             corrupted[i, :, top:top + occlusion_size, left:left + occlusion_size] = 0.0
             mask[i, 0, top:top + occlusion_size, left:left + occlusion_size] = 1.0
 
         # Blur patch
         if "blur" in modes:
-            top = torch.randint(0, h - blur_size, (1,), generator=rng).item()
-            left = torch.randint(0, w - blur_size, (1,), generator=rng).item()
+            top = randint(0, h - blur_size)
+            left = randint(0, w - blur_size)
             corrupted[i:i + 1] = apply_blur_patch(corrupted[i:i + 1], top, left, blur_size)
             mask[i, 0, top:top + blur_size, left:left + blur_size] = 1.0
 
         # Salt & pepper patch
         if "saltpepper" in modes:
-            top = torch.randint(0, h - sp_size, (1,), generator=rng).item()
-            left = torch.randint(0, w - sp_size, (1,), generator=rng).item()
-            sp = torch.rand((sp_size, sp_size), generator=rng, device=x.device)
+            top = randint(0, h - sp_size)
+            left = randint(0, w - sp_size)
+            sp = rand((sp_size, sp_size), device=x.device)
             sp = (sp > 0.5).float()
             corrupted[i, :, top:top + sp_size, left:left + sp_size] = sp.unsqueeze(0).repeat(3, 1, 1)
             mask[i, 0, top:top + sp_size, left:left + sp_size] = 1.0
 
         # Copy-paste patch
         if "copy" in modes:
-            src_top = torch.randint(0, h - copy_size, (1,), generator=rng).item()
-            src_left = torch.randint(0, w - copy_size, (1,), generator=rng).item()
-            dst_top = torch.randint(0, h - copy_size, (1,), generator=rng).item()
-            dst_left = torch.randint(0, w - copy_size, (1,), generator=rng).item()
+            src_top = randint(0, h - copy_size)
+            src_left = randint(0, w - copy_size)
+            dst_top = randint(0, h - copy_size)
+            dst_left = randint(0, w - copy_size)
             corrupted[i, :, dst_top:dst_top + copy_size, dst_left:dst_left + copy_size] = \
                 corrupted[i, :, src_top:src_top + copy_size, src_left:src_left + copy_size]
             mask[i, 0, dst_top:dst_top + copy_size, dst_left:dst_left + copy_size] = 1.0
