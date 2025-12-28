@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from alpha_map_cifar import TinyUNet2D, corrupt_batch, local_redundancy, set_seed
+from scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, local_redundancy, set_seed
 
 
 class AlphaHead2D(nn.Module):

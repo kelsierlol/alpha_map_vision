@@ -23,7 +23,7 @@ where data is unreliable without pushing the backbone to ignore signal.
 - A clean separation between “model fidelity” and “data quality scoring.”
 
 ## Scripts
-- `alpha_map_cifar_twophase.py` implements the two-phase pipeline for CIFAR-10.
+- `scripts/alpha_map_cifar_twophase.py` implements the two-phase pipeline for CIFAR-10.
 
 ## When to use
 Use two-phase when your product is **preflight QA / promotion gating** and

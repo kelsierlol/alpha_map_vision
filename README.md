@@ -10,12 +10,12 @@ Small, fast demo to show alpha heatmaps lighting up corrupted patches on real-wo
 
 ## Run
 ```bash
-python alpha_map_cifar.py --plot
+python scripts/alpha_map_cifar.py --plot
 ```
 
 ### Faster / cooler laptop
 ```bash
-python alpha_map_cifar.py --max-samples 1000 --epochs-unet 2 --epochs-alpha 2 --batch-size 64 --plot
+python scripts/alpha_map_cifar.py --max-samples 1000 --epochs-unet 2 --epochs-alpha 2 --batch-size 64 --plot
 ```
 
 ### Output
@@ -26,7 +26,7 @@ Runs PR-AUC, IoU@k%, FPR@90% recall on a validation set, and a generalization te
 (train on occlusion+blur, test on salt/pepper+copy). Optionally saves weights.
 
 ```bash
-python alpha_map_eval.py --max-samples 2000 --epochs-unet 3 --epochs-alpha 3 --eval-batches 20 --save-weights
+python scripts/alpha_map_eval.py --max-samples 2000 --epochs-unet 3 --epochs-alpha 3 --eval-batches 20 --save-weights
 ```
 
 ## Two-Phase Variant

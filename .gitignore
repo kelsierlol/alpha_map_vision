@@ -1,4 +1,7 @@
 data/
 outputs/
+weights/
+weights_twophase/
 __pycache__/
 *.pyc
+.DS_Store
