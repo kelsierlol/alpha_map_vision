@@ -20,3 +20,11 @@ python alpha_map_cifar.py --max-samples 1000 --epochs-unet 2 --epochs-alpha 2 --
 
 ### Output
 PNG saved to `outputs/cifar_alpha_demo.png`
+
+## Evaluation + Generalization Test
+Runs PR-AUC, IoU@k%, FPR@90% recall on a validation set, and a generalization test
+(train on occlusion+blur, test on salt/pepper+copy). Optionally saves weights.
+
+```bash
+python alpha_map_eval.py --max-samples 2000 --epochs-unet 3 --epochs-alpha 3 --eval-batches 20 --save-weights
+```
