@@ -28,3 +28,6 @@ Runs PR-AUC, IoU@k%, FPR@90% recall on a validation set, and a generalization te
 ```bash
 python alpha_map_eval.py --max-samples 2000 --epochs-unet 3 --epochs-alpha 3 --eval-batches 20 --save-weights
 ```
+
+## Two-Phase Variant
+See `TWO_PHASE.md` for rationale and usage.
