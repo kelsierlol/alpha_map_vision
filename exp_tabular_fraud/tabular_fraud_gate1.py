@@ -25,6 +25,8 @@ class Config:
     missing_frac: float = 0.08
     outlier_frac: float = 0.03
     duplicate_frac: float = 0.05
+    missing_value: float = -5.0
+    outlier_scale: float = 6.0
     output_json: str = "outputs/tabular_fraud_gate1.json"
 
 
@@ -100,6 +102,8 @@ def inject_corruption(
     missing_frac: float,
     outlier_frac: float,
     duplicate_frac: float,
+    missing_value: float,
+    outlier_scale: float,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     bsz, dim = x.shape
     x_corr = x.clone()
@@ -113,23 +117,24 @@ def inject_corruption(
         # missing entries
         n_miss = max(1, int(round(dim * missing_frac)))
         miss_idx = torch.randperm(dim, generator=rng)[:n_miss]
-        x_corr[r, miss_idx] = 0.0
+        x_corr[r, miss_idx] = missing_value
         mask[r, miss_idx] = 1.0
 
         # outliers (add large noise on a few dims)
         n_out = max(1, int(round(dim * outlier_frac)))
         out_idx = torch.randperm(dim, generator=rng)[:n_out]
-        scale = 6.0
-        x_corr[r, out_idx] = x_corr[r, out_idx] + scale * torch.randn_like(x_corr[r, out_idx])
+        # Replace (don't add) to avoid cancellation and better mimic wrong values
+        x_corr[r, out_idx] = outlier_scale * torch.randn_like(x_corr[r, out_idx])
         mask[r, out_idx] = 1.0
 
-    # duplicates (row-level redundancy)
-    n_dup = max(1, int(round(bsz * duplicate_frac)))
-    if bsz >= 2 and n_dup > 0:
-        src = torch.randperm(bsz, generator=rng)[:n_dup]
-        dst = torch.randperm(bsz, generator=rng)[:n_dup]
-        x_corr[dst] = x_corr[src]
-        mask[dst] = 1.0
+    # duplicates (row-level redundancy proxy) are not reliably detectable via residuals alone,
+    # so we do NOT include them in corruption masks/metrics.
+    if duplicate_frac > 0:
+        n_dup = max(1, int(round(bsz * duplicate_frac)))
+        if bsz >= 2 and n_dup > 0:
+            src = torch.randperm(bsz, generator=rng)[:n_dup]
+            dst = torch.randperm(bsz, generator=rng)[:n_dup]
+            x_corr[dst] = x_corr[src]
 
     return x_corr, mask
 
@@ -177,6 +182,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=Config.lr)
     parser.add_argument("--seed", type=int, default=Config.seed)
     parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--eval-mode", type=str, default="clean_target", choices=["clean_target", "input_target"])
     parser.add_argument("--output-json", type=str, default=Config.output_json)
     args = parser.parse_args()
 
@@ -241,7 +247,14 @@ def main() -> None:
             for i in range(0, train_t.size(0), cfg.batch_size):
                 batch = train_t[perm[i:i + cfg.batch_size]]
                 x_corr, mask = inject_corruption(
-                    batch.detach(), rng, cfg.corrupt_frac, cfg.missing_frac, cfg.outlier_frac, cfg.duplicate_frac
+                    batch.detach(),
+                    rng,
+                    cfg.corrupt_frac,
+                    cfg.missing_frac,
+                    cfg.outlier_frac,
+                    cfg.duplicate_frac,
+                    cfg.missing_value,
+                    cfg.outlier_scale,
                 )
                 with torch.no_grad():
                     recon = ae(x_corr)
@@ -266,10 +279,20 @@ def main() -> None:
                 for i in range(0, t.size(0), cfg.batch_size):
                     batch = t[i:i + cfg.batch_size]
                     x_corr, mask = inject_corruption(
-                        batch, rng, cfg.corrupt_frac, cfg.missing_frac, cfg.outlier_frac, cfg.duplicate_frac
+                        batch,
+                        rng,
+                        cfg.corrupt_frac,
+                        cfg.missing_frac,
+                        cfg.outlier_frac,
+                        cfg.duplicate_frac,
+                        cfg.missing_value,
+                        cfg.outlier_scale,
                     )
                     recon = ae(x_corr)
-                    resid = (recon - batch).pow(2)
+                    if args.eval_mode == "clean_target":
+                        resid = (recon - batch).pow(2)
+                    else:
+                        resid = (recon - x_corr).pow(2)
                     logits = alpha_head(resid)
                     score = torch.sigmoid(logits).cpu().numpy().reshape(-1)
                     scores.append(score)
@@ -291,6 +314,7 @@ def main() -> None:
     report = {
         "config": asdict(Config(data_path=args.data_path, seed=args.seed, max_rows=args.max_rows, batch_size=args.batch_size, epochs_ae=args.epochs_ae, epochs_alpha=args.epochs_alpha, lr=args.lr, output_json=args.output_json)),
         "device": str(device),
+        "eval_mode": args.eval_mode,
         "runs": all_runs,
     }
 
