@@ -12,8 +12,8 @@ from torchvision import datasets, transforms
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(REPO_ROOT)
 
-from scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
-from scripts.alpha_map_cifar_twophase import AlphaHead2D
+from vision.scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
+from vision.scripts.alpha_map_cifar_twophase import AlphaHead2D
 
 
 def make_device() -> torch.device:

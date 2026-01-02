@@ -187,7 +187,8 @@ def pr_auc(scores: np.ndarray, labels: np.ndarray) -> float:
     fp = np.cumsum(1 - labels_sorted)
     precision = tp / np.maximum(tp + fp, 1e-12)
     recall = tp / np.maximum(labels_sorted.sum(), 1e-12)
-    return np.trapezoid(precision, recall)
+    trap = getattr(np, "trapezoid", np.trapz)
+    return trap(precision, recall)
 
 
 def main() -> None:

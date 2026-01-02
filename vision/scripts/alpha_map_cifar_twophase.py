@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, local_redundancy, set_seed
+from vision.scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, local_redundancy, set_seed
 
 
 class AlphaHead2D(nn.Module):
@@ -41,7 +41,8 @@ def pr_auc(scores: np.ndarray, labels: np.ndarray) -> float:
     fp = np.cumsum(1 - labels_sorted)
     precision = tp / np.maximum(tp + fp, 1e-12)
     recall = tp / np.maximum(labels_sorted.sum(), 1e-12)
-    return np.trapezoid(precision, recall)
+    trap = getattr(np, "trapezoid", np.trapz)
+    return trap(precision, recall)
 
 
 def iou_at_k(scores: np.ndarray, labels: np.ndarray) -> float:
@@ -114,6 +115,7 @@ def main() -> None:
     parser.add_argument("--weights-dir", type=str, default="weights_twophase")
     parser.add_argument("--eval-batches", type=int, default=20)
     parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--recon-check", action="store_true")
     parser.add_argument("--output-dir", type=str, default="outputs")
     args = parser.parse_args()
 
@@ -145,6 +147,15 @@ def main() -> None:
             opt_unet.step()
             total += loss.item()
         print(f"unet epoch {epoch:02d} | loss {total / max(1, len(loader)):.4f}")
+
+    if args.recon_check:
+        with torch.no_grad():
+            x, _ = next(iter(test_loader))
+            x = x.to(device)
+            recon = model(x)
+            mse = F.mse_loss(recon, x).item()
+            psnr = 10.0 * np.log10(1.0 / max(mse, 1e-12))
+        print(f"Recon PSNR (clean): {psnr:.2f} dB")
 
     # Phase 2: Freeze UNet, train alpha head on residuals
     for p in model.parameters():
@@ -191,7 +202,7 @@ def main() -> None:
         torch.save(alpha_head.state_dict(), os.path.join(args.weights_dir, "alpha_head.pth"))
         print(f"Saved weights to {args.weights_dir}")
 
-    if args.plot:
+    if args.plot or args.recon_check:
         os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl_cache")
         import matplotlib
         matplotlib.use("Agg")
@@ -212,16 +223,33 @@ def main() -> None:
         heat = alpha[0, 0].cpu().numpy()
         m = mask[0, 0].cpu().numpy()
 
-        fig, axs = plt.subplots(1, 3, figsize=(9, 3))
+        ncols = 5 if args.recon_check else 3
+        fig, axs = plt.subplots(1, ncols, figsize=(3 * ncols, 3))
         axs[0].imshow(img)
         axs[0].set_title("Corrupted")
         axs[0].axis("off")
-        axs[1].imshow(heat, cmap="viridis")
-        axs[1].set_title("Trust map (alpha)")
-        axs[1].axis("off")
-        axs[2].imshow(m, cmap="Reds")
-        axs[2].set_title("Corruption mask")
-        axs[2].axis("off")
+        if args.recon_check:
+            orig = x[0].permute(1, 2, 0).cpu().numpy()
+            rec = recon[0].permute(1, 2, 0).cpu().numpy()
+            axs[1].imshow(orig)
+            axs[1].set_title("Original")
+            axs[1].axis("off")
+            axs[2].imshow(rec)
+            axs[2].set_title("Reconstruction")
+            axs[2].axis("off")
+            axs[3].imshow(heat, cmap="viridis")
+            axs[3].set_title("Trust map (alpha)")
+            axs[3].axis("off")
+            axs[4].imshow(m, cmap="Reds")
+            axs[4].set_title("Corruption mask")
+            axs[4].axis("off")
+        else:
+            axs[1].imshow(heat, cmap="viridis")
+            axs[1].set_title("Trust map (alpha)")
+            axs[1].axis("off")
+            axs[2].imshow(m, cmap="Reds")
+            axs[2].set_title("Corruption mask")
+            axs[2].axis("off")
         fig.tight_layout()
         out = os.path.join(args.output_dir, "cifar_alpha_twophase.png")
         fig.savefig(out, dpi=150)

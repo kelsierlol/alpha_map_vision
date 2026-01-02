@@ -9,8 +9,8 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from torchvision.models import resnet18
 
-from scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
-from scripts.alpha_map_cifar_twophase import AlphaHead2D
+from vision.scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
+from vision.scripts.alpha_map_cifar_twophase import AlphaHead2D
 
 
 def make_resnet18(num_classes: int = 10) -> torch.nn.Module:

@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
-from scripts.alpha_map_cifar_twophase import (
+from vision.scripts.alpha_map_cifar import TinyUNet2D, corrupt_batch, set_seed
+from vision.scripts.alpha_map_cifar_twophase import (
     AlphaHead2D,
     fpr_at_recall,
     hit_topk,
