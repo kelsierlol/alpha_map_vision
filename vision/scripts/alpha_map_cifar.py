@@ -136,9 +136,10 @@ def corrupt_batch(
         return torch.rand(shape, device=device)
 
     def randint(low, high):
+        device = x.device
         if rng is not None:
-            return torch.randint(low, high, (1,), generator=rng, device="cpu").item()
-        return torch.randint(low, high, (1,), device="cpu").item()
+            return torch.randint(low, high, (1,), generator=rng, device=device).item()
+        return torch.randint(low, high, (1,), device=device).item()
 
     if modes is None:
         modes = ("occlusion", "blur", "saltpepper", "copy")
