@@ -65,6 +65,14 @@ def repair_batch(
     return corrupt, repaired, mask
 
 
+def corruption_weight(
+    score_map: torch.Tensor,
+    min_weight: float,
+) -> torch.Tensor:
+    weight = 1.0 - score_map.mean(dim=(1, 2, 3))
+    return weight.clamp(min=min_weight)
+
+
 def train_classifier(
     loader: DataLoader,
     model: torch.nn.Module,
@@ -81,6 +89,31 @@ def train_classifier(
             y = y.to(device)
             logits = model(x)
             loss = F.cross_entropy(logits, y)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item()
+        print(f"classifier epoch {epoch:02d} | loss {total / max(1, len(loader)):.4f}")
+
+
+def train_classifier_weighted(
+    loader: DataLoader,
+    model: torch.nn.Module,
+    device: torch.device,
+    epochs: int,
+    lr: float,
+) -> None:
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    model.train()
+    for epoch in range(1, epochs + 1):
+        total = 0.0
+        for x, y, w in loader:
+            x = x.to(device)
+            y = y.to(device)
+            w = w.to(device)
+            logits = model(x)
+            loss = F.cross_entropy(logits, y, reduction="none")
+            loss = (loss * w).mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -123,6 +156,8 @@ def main() -> None:
     parser.add_argument("--blend", type=float, default=0.3)
     parser.add_argument("--oracle", action="store_true")
     parser.add_argument("--mix-train", action="store_true")
+    parser.add_argument("--gate2-mode", type=str, default="repair", choices=["repair", "downweight"])
+    parser.add_argument("--min-weight", type=float, default=0.2)
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -200,8 +235,35 @@ def main() -> None:
             drop_last=False,
         ), (float(np.mean(coverages)) if coverages else 0.0)
 
+    def make_weighted_loader(oracle: bool = False):
+        xs = []
+        ys = []
+        ws = []
+        for x, y in train_loader:
+            x = x.to(device)
+            corrupt, mask_gt = corrupt_batch(x, rng, modes=train_modes)
+            with torch.no_grad():
+                recon = unet(corrupt)
+                resid = (recon - corrupt).pow(2).mean(dim=1, keepdim=True)
+                if oracle:
+                    score = mask_gt
+                else:
+                    logits = alpha_head(resid)
+                    score = torch.sigmoid(logits)
+            w = corruption_weight(score, args.min_weight)
+            xs.append(corrupt.cpu())
+            ys.append(y)
+            ws.append(w.cpu())
+        return DataLoader(
+            list(zip(torch.cat(xs, dim=0), torch.cat(ys, dim=0), torch.cat(ws, dim=0))),
+            batch_size=args.batch_size,
+            shuffle=True,
+            drop_last=False,
+        )
+
     corrupt_loader, _ = make_repair_loader(use_repair=False)
     repair_loader, repair_cov = make_repair_loader(use_repair=True, oracle=args.oracle)
+    weighted_loader = make_weighted_loader(oracle=args.oracle)
 
     if args.mix_train:
         mix_x = []
@@ -240,9 +302,13 @@ def main() -> None:
     train_classifier(clean_loader, clf_clean, device, args.epochs, args.lr)
     print("\n=== Train B: corrupted ===")
     train_classifier(corrupt_loader, clf_corrupt, device, args.epochs, args.lr)
-    print("\n=== Train C: alpha-repaired ===")
-    train_classifier(repair_loader, clf_repair, device, args.epochs, args.lr)
-    print(f"avg repair coverage: {repair_cov * 100:.2f}%")
+    if args.gate2_mode == "repair":
+        print("\n=== Train C: alpha-repaired ===")
+        train_classifier(repair_loader, clf_repair, device, args.epochs, args.lr)
+        print(f"avg repair coverage: {repair_cov * 100:.2f}%")
+    else:
+        print("\n=== Train C: alpha-weighted ===")
+        train_classifier_weighted(weighted_loader, clf_repair, device, args.epochs, args.lr)
     if mix_loader is not None:
         print("\n=== Train D: mixed (clean+corrupt+repair) ===")
         train_classifier(mix_loader, clf_mix, device, args.epochs, args.lr)
@@ -284,7 +350,8 @@ def main() -> None:
     print("Train \\ Test | Clean | Corrupt Seen | Corrupt Unseen")
     print(f"Clean train  | {acc_clean_a:.4f} | {acc_seen_a:.4f} | {acc_unseen_a:.4f}")
     print(f"Corrupt train| {acc_clean_b:.4f} | {acc_seen_b:.4f} | {acc_unseen_b:.4f}")
-    print(f"Alpha-repair | {acc_clean_c:.4f} | {acc_seen_c:.4f} | {acc_unseen_c:.4f}")
+    label = "Alpha-repair" if args.gate2_mode == "repair" else "Alpha-weight"
+    print(f"{label} | {acc_clean_c:.4f} | {acc_seen_c:.4f} | {acc_unseen_c:.4f}")
     if clf_mix is not None:
         acc_clean_d = eval_classifier(test_loader, clf_mix, device)
         acc_seen_d = eval_classifier(seen_loader, clf_mix, device)
