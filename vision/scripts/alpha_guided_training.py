@@ -159,7 +159,7 @@ def main() -> None:
     unet.eval()
     alpha_head.eval()
 
-    rng = torch.Generator().manual_seed(args.seed + 11)
+    rng = torch.Generator(device=device).manual_seed(args.seed + 11)
     train_modes = tuple(m.strip() for m in args.train_modes.split(",") if m.strip())
     unseen_modes = tuple(m.strip() for m in args.eval_unseen.split(",") if m.strip())
 
