@@ -116,6 +116,8 @@ def main() -> None:
     parser.add_argument("--eval-batches", type=int, default=20)
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--recon-check", action="store_true")
+    parser.add_argument("--target-fpr", type=float, default=0.0)
+    parser.add_argument("--calib-batches", type=int, default=10)
     parser.add_argument("--output-dir", type=str, default="outputs")
     args = parser.parse_args()
 
@@ -255,6 +257,28 @@ def main() -> None:
         fig.savefig(out, dpi=150)
         print(f"Saved {out}")
 
+    # Optional calibration on clean batches
+    calib_thresh = None
+    if args.target_fpr and args.target_fpr > 0:
+        clean_scores = []
+        for i, (x, _) in enumerate(test_loader):
+            if i >= args.calib_batches:
+                break
+            x = x.to(device)
+            with torch.no_grad():
+                recon = model(x)
+                target = x if args.residual_target == "clean" else x
+                resid = (recon - target).pow(2).mean(dim=1, keepdim=True)
+                logits = alpha_head(resid)
+                score_map = torch.sigmoid(logits)
+            clean_scores.append(score_map.detach().cpu().numpy().reshape(-1))
+        if clean_scores:
+            clean_scores_np = np.concatenate(clean_scores)
+            calib_thresh = np.quantile(clean_scores_np, 1.0 - args.target_fpr)
+            clean_fpr = float((clean_scores_np >= calib_thresh).mean())
+            print(f"Calibrated threshold @ target FPR={args.target_fpr:.3f}: {calib_thresh:.4f}")
+            print(f"Observed clean FPR: {clean_fpr:.4f}")
+
     # Quick eval on test set
     alpha_head.eval()
     scores = []
@@ -263,6 +287,8 @@ def main() -> None:
     iou_dil = 0.0
     hit_dil = 0.0
     count = 0
+    flagged = 0
+    total = 0
     for i, (x, _) in enumerate(test_loader):
         if i >= args.eval_batches:
             break
@@ -277,6 +303,9 @@ def main() -> None:
         score = score_map.cpu().numpy().reshape(-1)
         scores.append(score)
         labels.append(mask.cpu().numpy().reshape(-1))
+        if calib_thresh is not None:
+            flagged += (score >= calib_thresh).sum()
+            total += score.size
 
         dil_mask = mask_dilate(mask)
         coverage = float(mask.mean().item())
@@ -294,6 +323,8 @@ def main() -> None:
         print(f"IoU@k% (dilated mask): {iou_dil / count:.4f}")
         print(f"Hit@k% (dilated mask): {hit_dil / count:.4f}")
     print(f"FPR@90% recall: {fpr_at_recall(scores_np, labels_np, 0.9):.4f}")
+    if calib_thresh is not None and total:
+        print(f"Flagged @ calibrated threshold: {flagged / total:.4f}")
 
 
 if __name__ == "__main__":
