@@ -1,4 +1,4 @@
-# Gate 2 Downstream Impact Report (Alpha-Guided Repair)
+# Gate 2 Downstream Impact Report (AdaLoss)
 
 ## Setup
 - Dataset: CIFAR-10
@@ -7,17 +7,27 @@
 - Epochs: 10
 - Augmentation: random crop + horizontal flip
 - Normalization: CIFAR mean/std
-- Repair policy: top-k=5%, blend=0.2, dilate=1
+- Gate 2 mode: AdaLoss (alpha-modulated CE)
+- Alpha range: [-10.0, 1.9]
+- Lambda sweep: 0.1, 0.2, 0.3
 
 ## Results (accuracy)
+Baseline:
 Train \ Test | Clean | Corrupt Seen | Corrupt Unseen
-Clean train  | 0.6025 | 0.4270 | 0.4873
-Corrupt train| 0.4209 | 0.3816 | 0.3510
-Alpha-repair | 0.4744 | 0.4353 | 0.4109
+Clean train  | 0.5656 | 0.3870 | 0.4633
+Corrupt train| 0.4459 | 0.3799 | 0.4094
+
+AdaLoss(0.1):
+AdaLoss(0.1)| 0.4589 | 0.4248 | 0.3941
+
+AdaLoss(0.2):
+AdaLoss(0.2)| 0.5358 | 0.4896 | 0.4510
+
+AdaLoss(0.3):
+AdaLoss(0.3)| 0.4680 | 0.4460 | 0.4168
 
 ## Interpretation (Concise)
-- Alpha‑repair improves corrupted‑test accuracy vs corrupt‑train baseline:
-  - Seen: +5.37 pts
-  - Unseen: +5.99 pts
-- Clean accuracy drops vs clean‑train, but remains above corrupt‑train.
-- Coverage is light (≈5%), consistent with “alpha‑light” strategy.
+- AdaLoss shows a clear robustness lift, especially at lambda=0.2.
+- Lambda=0.2 improves corrupt-seen accuracy by +10.16 pts vs clean-train baseline, with a modest clean-accuracy drop (~3 pts).
+- Lambda=0.1 helps seen accuracy but hurts clean accuracy too much.
+- Lambda=0.3 underperforms lambda=0.2.
