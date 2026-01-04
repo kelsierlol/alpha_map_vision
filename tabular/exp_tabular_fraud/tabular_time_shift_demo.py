@@ -22,8 +22,10 @@ class Config:
     batch_size: int = 512
     lr: float = 1e-3
     threshold_quantile: float = 0.99
+    target_fpr: float = 0.05
     simulate_schema_change: bool = True
     schema_shift_scale: float = 5.0
+    report_fraud_proxy: bool = True
     output_json: str = "outputs/tabular_time_shift_report.json"
 
 
@@ -101,8 +103,11 @@ def main() -> None:
     parser.add_argument("--train-quantile", type=float, default=Config.train_quantile)
     parser.add_argument("--mid-quantile", type=float, default=Config.mid_quantile)
     parser.add_argument("--threshold-quantile", type=float, default=Config.threshold_quantile)
+    parser.add_argument("--target-fpr", type=float, default=Config.target_fpr)
     parser.add_argument("--simulate-schema-change", action="store_true")
     parser.add_argument("--schema-shift-scale", type=float, default=Config.schema_shift_scale)
+    parser.add_argument("--report-fraud-proxy", action="store_true", default=Config.report_fraud_proxy)
+    parser.add_argument("--no-report-fraud-proxy", action="store_false", dest="report_fraud_proxy")
     parser.add_argument("--output-json", type=str, default=Config.output_json)
     args = parser.parse_args()
 
@@ -116,8 +121,10 @@ def main() -> None:
         batch_size=args.batch_size,
         lr=args.lr,
         threshold_quantile=args.threshold_quantile,
+        target_fpr=args.target_fpr,
         simulate_schema_change=args.simulate_schema_change,
         schema_shift_scale=args.schema_shift_scale,
+        report_fraud_proxy=args.report_fraud_proxy,
         output_json=args.output_json,
     )
 
@@ -182,12 +189,15 @@ def main() -> None:
         s_mid = residual_score(model, torch.from_numpy(x_mid_n).to(device)).cpu().numpy()
         s_late = residual_score(model, torch.from_numpy(x_late_n).to(device)).cpu().numpy()
 
-    thresh = float(np.quantile(s_train, cfg.threshold_quantile))
+    if cfg.target_fpr and cfg.target_fpr > 0:
+        thresh = float(np.quantile(s_train, 1.0 - cfg.target_fpr))
+    else:
+        thresh = float(np.quantile(s_train, cfg.threshold_quantile))
     report = {
         "config": asdict(cfg),
         "device": str(device),
         "counts": {"train": int(len(s_train)), "mid": int(len(s_mid)), "late": int(len(s_late))},
-        "threshold": {"quantile": cfg.threshold_quantile, "value": thresh},
+        "threshold": {"quantile": cfg.threshold_quantile, "target_fpr": cfg.target_fpr, "value": thresh},
         "scores": {
             "train": stats(s_train),
             "mid": stats(s_mid),
@@ -200,6 +210,18 @@ def main() -> None:
         },
     }
 
+    if cfg.report_fraud_proxy:
+        fraud = (y == 1)
+        if fraud.any():
+            x_f = normalize_train(x_train, x[fraud])
+            with torch.no_grad():
+                s_fraud = residual_score(model, torch.from_numpy(x_f).to(device)).cpu().numpy()
+            report["fraud_proxy"] = {
+                "count": int(len(s_fraud)),
+                "scores": stats(s_fraud),
+                "flag_rate": float((s_fraud >= thresh).mean()),
+            }
+
     os.makedirs(os.path.dirname(cfg.output_json), exist_ok=True)
     with open(cfg.output_json, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
@@ -208,4 +230,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
