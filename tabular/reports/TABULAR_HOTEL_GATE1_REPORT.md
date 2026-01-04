@@ -12,25 +12,29 @@ Implementation: `tabular/exp_tabular_fraud/tabular_hotel_gate1.py`
 
 ## Setup
 - Model: MLP autoencoder (MSE)
-- Features: numeric columns only (intersection of ref + analysis)
+- Features: numeric + categorical (frequency encoding)
 - Threshold: calibrated to clean FPR target (5%)
 - Epochs: 5
 
 ## Results (clean-FPR calibrated)
-Threshold (target FPR=5%): 0.0632
+Threshold (target FPR=5%): 0.1144
 
 Flag rates:
 - Reference (clean): 5.0%
-- Analysis: 53.4%
+- Analysis: 11.9%
 
 Score stats:
-- Reference mean 0.0283, p95 0.0632, p99 0.1613
-- Analysis mean 0.0900, p95 0.1739, p99 0.4610
+- Reference mean 0.0441, p95 0.1144, p99 0.2988
+- Analysis mean 0.0692, p95 0.1955, p99 0.3868
 
 ## Interpretation (Concise)
 - Calibration holds on the reference set (5%).
-- Analysis period shows a large shift in residual distribution (flag rate 53%).
-- This mirrors the “performance drop” window NannyML highlights — SafeLoop would block or warn before retraining.
+- Analysis period shows a clear drift signal (flag rate 11.9% vs 5% baseline).
+- Frequency encoding preserves categorical signal without exploding residuals.
+
+Notes:
+- One-hot encoding + winsor can over-smooth drift and reduce signal.
+- No winsorization causes extreme residual blow-ups on this dataset.
 
 Artifacts:
 - JSON: `outputs/tabular_hotel_gate1.json` (not committed; generated locally)
