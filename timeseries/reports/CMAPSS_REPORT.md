@@ -9,6 +9,17 @@ Metrics:
 - IoU@k: 1.0000
 - FPR@90: 0.0000
 
+## Gate 1 (Real Split, No Injected Corruption)
+Script: `timeseries/exp_sensor_dropouts/gate1_cmapss_real_split.py`  
+Data: `/Users/prajwal/Projects/supervised_rl/data/train_FD001.txt`  
+Split: first 70% (train) / last 30% (eval), calibrated to target FPR=5%
+
+Metrics:
+- Threshold (5% FPR): 0.04236
+- Flag rate train: 5.01%
+- Flag rate eval: 4.67%
+- Status: PASS (no drift detected on this split)
+
 ## Gate 2 (RUL Impact, Official Split)
 Backbone: TCNRegressor (1D conv, hidden=128)  
 Corruption: drop_prob=0.7, drop_len=8, drop_value=-3.0
