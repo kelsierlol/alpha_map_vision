@@ -17,21 +17,34 @@ Implementation: `tabular/exp_tabular_fraud/tabular_time_shift_demo.py`
 - max_rows: 200k
 - epochs: 5
 
-## Results (clean-FPR calibrated, schema change on)
+## Results (clean-FPR calibrated)
 Threshold (target FPR=5%): 0.0191
 
+### Baseline (no schema change)
+Flag rates:
+- Train (clean): 5.0%
+- Mid: 36.8%
+- Late: 93.4%
+
+Late score stats:
+- mean 0.0520, p95 0.1069, p99 0.1952
+
+### Schema change (Amount ×5 in late slice)
 Flag rates:
 - Train (clean): 5.0%
 - Mid: 36.8%
 - Late (schema-shifted): 97.1%
+
+Late score stats:
+- mean 0.4105, p95 0.7429, p99 5.7882
 
 Fraud proxy (Class=1 rows; unsupervised sanity check):
 - Flag rate: 89.6%
 
 ## Interpretation (Concise)
 - Clean-FPR calibration behaves as expected (≈5% on training slice).
-- Mid and late slices show strong drift relative to early slice.
-- With a simulated schema shift, late slice is almost entirely flagged → clear “block” signal.
+- Even without schema change, later time slices drift away from early slice (preflight warning).
+- With schema change, late slice scores jump sharply (p99 explodes), giving a clear “block” signal.
 
 Artifacts:
 - JSON: `outputs/tabular_time_shift_report.json` (not committed; generated locally)
