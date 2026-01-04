@@ -147,6 +147,7 @@ def train_classifier_adaloss(
     lr: float,
     alpha_min: float,
     alpha_max: float,
+    lambda_adaloss: float,
     oracle: bool,
 ) -> None:
     opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -169,7 +170,8 @@ def train_classifier_adaloss(
             alpha = alpha_from_score(score_mean, alpha_min, alpha_max)
             logits = model(corrupt)
             ce = F.cross_entropy(logits, y, reduction="none")
-            loss = adaloss_from_residual(ce, alpha).mean()
+            ada = adaloss_from_residual(ce, alpha)
+            loss = (ce + lambda_adaloss * ada).mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -216,6 +218,8 @@ def main() -> None:
     parser.add_argument("--min-weight", type=float, default=0.2)
     parser.add_argument("--alpha-min", type=float, default=-10.0)
     parser.add_argument("--alpha-max", type=float, default=1.9)
+    parser.add_argument("--lambda-adaloss", type=float, default=0.2)
+    parser.add_argument("--lambda-sweep", type=str, default="")
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -350,6 +354,48 @@ def main() -> None:
     else:
         mix_loader = None
 
+    def run_eval(label: str, clf_clean: torch.nn.Module, clf_corrupt: torch.nn.Module, clf_repair: torch.nn.Module, clf_mix: torch.nn.Module | None) -> None:
+        acc_clean_a = eval_classifier(test_loader, clf_clean, device)
+        acc_clean_b = eval_classifier(test_loader, clf_corrupt, device)
+        acc_clean_c = eval_classifier(test_loader, clf_repair, device)
+
+        def corrupt_eval_loader(modes: Tuple[str, ...]):
+            xs = []
+            ys = []
+            for x, y in test_loader:
+                x = x.to(device)
+                corrupt, _ = corrupt_batch(x, rng, modes=modes)
+                xs.append(corrupt.cpu())
+                ys.append(y)
+            return DataLoader(
+                list(zip(torch.cat(xs, dim=0), torch.cat(ys, dim=0))),
+                batch_size=args.batch_size,
+                shuffle=False,
+                drop_last=False,
+            )
+
+        seen_loader = corrupt_eval_loader(train_modes)
+        unseen_loader = corrupt_eval_loader(unseen_modes)
+
+        acc_seen_a = eval_classifier(seen_loader, clf_clean, device)
+        acc_seen_b = eval_classifier(seen_loader, clf_corrupt, device)
+        acc_seen_c = eval_classifier(seen_loader, clf_repair, device)
+
+        acc_unseen_a = eval_classifier(unseen_loader, clf_clean, device)
+        acc_unseen_b = eval_classifier(unseen_loader, clf_corrupt, device)
+        acc_unseen_c = eval_classifier(unseen_loader, clf_repair, device)
+        acc_unseen_d = eval_classifier(unseen_loader, clf_mix, device) if clf_mix else None
+
+        print(f"\n=== Results ({label}) ===")
+        print("Train \\ Test | Clean | Corrupt Seen | Corrupt Unseen")
+        print(f"Clean train  | {acc_clean_a:.4f} | {acc_seen_a:.4f} | {acc_unseen_a:.4f}")
+        print(f"Corrupt train| {acc_clean_b:.4f} | {acc_seen_b:.4f} | {acc_unseen_b:.4f}")
+        print(f"{label:11s}| {acc_clean_c:.4f} | {acc_seen_c:.4f} | {acc_unseen_c:.4f}")
+        if clf_mix is not None:
+            acc_clean_d = eval_classifier(test_loader, clf_mix, device)
+            acc_seen_d = eval_classifier(seen_loader, clf_mix, device)
+            print(f"Mix train    | {acc_clean_d:.4f} | {acc_seen_d:.4f} | {acc_unseen_d:.4f}")
+
     # Train three classifiers
     clf_clean = make_resnet18().to(device)
     clf_corrupt = make_resnet18().to(device)
@@ -368,6 +414,28 @@ def main() -> None:
         print("\n=== Train C: alpha-weighted ===")
         train_classifier_weighted(weighted_loader, clf_repair, device, args.epochs, args.lr)
     else:
+        sweep = [float(s.strip()) for s in args.lambda_sweep.split(",") if s.strip()] if args.lambda_sweep else []
+        if sweep:
+            for lam in sweep:
+                clf_repair = make_resnet18().to(device)
+                print(f"\n=== Train C: AdaLoss (lambda={lam}) ===")
+                train_classifier_adaloss(
+                    train_loader,
+                    clf_repair,
+                    unet,
+                    alpha_head,
+                    device,
+                    rng,
+                    train_modes,
+                    args.epochs,
+                    args.lr,
+                    args.alpha_min,
+                    args.alpha_max,
+                    lam,
+                    args.oracle,
+                )
+                run_eval(f"AdaLoss({lam})", clf_clean, clf_corrupt, clf_repair, clf_mix if mix_loader is not None else None)
+            return
         print("\n=== Train C: AdaLoss (alpha-modulated CE) ===")
         train_classifier_adaloss(
             train_loader,
@@ -381,60 +449,20 @@ def main() -> None:
             args.lr,
             args.alpha_min,
             args.alpha_max,
+            args.lambda_adaloss,
             args.oracle,
         )
     if mix_loader is not None:
         print("\n=== Train D: mixed (clean+corrupt+repair) ===")
         train_classifier(mix_loader, clf_mix, device, args.epochs, args.lr)
 
-    # Eval: clean test
-    acc_clean_a = eval_classifier(test_loader, clf_clean, device)
-    acc_clean_b = eval_classifier(test_loader, clf_corrupt, device)
-    acc_clean_c = eval_classifier(test_loader, clf_repair, device)
-
-    # Eval: corrupted test (seen)
-    def corrupt_eval_loader(modes: Tuple[str, ...]):
-        xs = []
-        ys = []
-        for x, y in test_loader:
-            x = x.to(device)
-            corrupt, _ = corrupt_batch(x, rng, modes=modes)
-            xs.append(corrupt.cpu())
-            ys.append(y)
-        return DataLoader(
-            list(zip(torch.cat(xs, dim=0), torch.cat(ys, dim=0))),
-            batch_size=args.batch_size,
-            shuffle=False,
-            drop_last=False,
-        )
-
-    seen_loader = corrupt_eval_loader(train_modes)
-    unseen_loader = corrupt_eval_loader(unseen_modes)
-
-    acc_seen_a = eval_classifier(seen_loader, clf_clean, device)
-    acc_seen_b = eval_classifier(seen_loader, clf_corrupt, device)
-    acc_seen_c = eval_classifier(seen_loader, clf_repair, device)
-
-    acc_unseen_a = eval_classifier(unseen_loader, clf_clean, device)
-    acc_unseen_b = eval_classifier(unseen_loader, clf_corrupt, device)
-    acc_unseen_c = eval_classifier(unseen_loader, clf_repair, device)
-    acc_unseen_d = eval_classifier(unseen_loader, clf_mix, device) if clf_mix else None
-
-    print("\n=== Results (accuracy) ===")
-    print("Train \\ Test | Clean | Corrupt Seen | Corrupt Unseen")
-    print(f"Clean train  | {acc_clean_a:.4f} | {acc_seen_a:.4f} | {acc_unseen_a:.4f}")
-    print(f"Corrupt train| {acc_clean_b:.4f} | {acc_seen_b:.4f} | {acc_unseen_b:.4f}")
-    if args.gate2_mode == "repair":
-        label = "Alpha-repair"
-    elif args.gate2_mode == "downweight":
-        label = "Alpha-weight"
-    else:
-        label = "AdaLoss"
-    print(f"{label} | {acc_clean_c:.4f} | {acc_seen_c:.4f} | {acc_unseen_c:.4f}")
-    if clf_mix is not None:
-        acc_clean_d = eval_classifier(test_loader, clf_mix, device)
-        acc_seen_d = eval_classifier(seen_loader, clf_mix, device)
-        print(f"Mix train    | {acc_clean_d:.4f} | {acc_seen_d:.4f} | {acc_unseen_d:.4f}")
+    run_eval(
+        "Alpha-repair" if args.gate2_mode == "repair" else ("Alpha-weight" if args.gate2_mode == "downweight" else "AdaLoss"),
+        clf_clean,
+        clf_corrupt,
+        clf_repair,
+        clf_mix if mix_loader is not None else None,
+    )
 
 
 if __name__ == "__main__":
