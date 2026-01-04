@@ -121,6 +121,62 @@ def train_classifier_weighted(
         print(f"classifier epoch {epoch:02d} | loss {total / max(1, len(loader)):.4f}")
 
 
+def adaloss_from_residual(residual: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    eps = 1e-6
+    a = alpha.clone()
+    a = torch.where(a.abs() < eps, a + eps * torch.sign(a + 1e-9), a)
+    a = torch.where((a - 2.0).abs() < eps, a - eps, a)
+    b = (a - 2.0).abs().clamp_min(eps)
+    return (b / a) * ((residual.pow(2) / b + 1.0).pow(a / 2.0) - 1.0)
+
+
+def alpha_from_score(score: torch.Tensor, alpha_min: float, alpha_max: float) -> torch.Tensor:
+    a = alpha_min + (alpha_max - alpha_min) * score
+    return torch.clamp(a, alpha_min, alpha_max)
+
+
+def train_classifier_adaloss(
+    loader: DataLoader,
+    model: torch.nn.Module,
+    unet: TinyUNet2D,
+    alpha_head: AlphaHead2D,
+    device: torch.device,
+    rng: torch.Generator,
+    modes: Tuple[str, ...],
+    epochs: int,
+    lr: float,
+    alpha_min: float,
+    alpha_max: float,
+    oracle: bool,
+) -> None:
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    model.train()
+    for epoch in range(1, epochs + 1):
+        total = 0.0
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            corrupt, mask_gt = corrupt_batch(x, rng, modes=modes)
+            with torch.no_grad():
+                recon = unet(corrupt)
+                resid_img = (recon - corrupt).pow(2).mean(dim=1, keepdim=True)
+                if oracle:
+                    score = mask_gt
+                else:
+                    logits = alpha_head(resid_img)
+                    score = torch.sigmoid(logits)
+                score_mean = score.mean(dim=(1, 2, 3))
+            alpha = alpha_from_score(score_mean, alpha_min, alpha_max)
+            logits = model(corrupt)
+            ce = F.cross_entropy(logits, y, reduction="none")
+            loss = adaloss_from_residual(ce, alpha).mean()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item()
+        print(f"classifier epoch {epoch:02d} | loss {total / max(1, len(loader)):.4f}")
+
+
 def eval_classifier(
     loader: DataLoader,
     model: torch.nn.Module,
@@ -156,8 +212,10 @@ def main() -> None:
     parser.add_argument("--blend", type=float, default=0.3)
     parser.add_argument("--oracle", action="store_true")
     parser.add_argument("--mix-train", action="store_true")
-    parser.add_argument("--gate2-mode", type=str, default="repair", choices=["repair", "downweight"])
+    parser.add_argument("--gate2-mode", type=str, default="repair", choices=["repair", "downweight", "adaloss"])
     parser.add_argument("--min-weight", type=float, default=0.2)
+    parser.add_argument("--alpha-min", type=float, default=-10.0)
+    parser.add_argument("--alpha-max", type=float, default=1.9)
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -306,9 +364,25 @@ def main() -> None:
         print("\n=== Train C: alpha-repaired ===")
         train_classifier(repair_loader, clf_repair, device, args.epochs, args.lr)
         print(f"avg repair coverage: {repair_cov * 100:.2f}%")
-    else:
+    elif args.gate2_mode == "downweight":
         print("\n=== Train C: alpha-weighted ===")
         train_classifier_weighted(weighted_loader, clf_repair, device, args.epochs, args.lr)
+    else:
+        print("\n=== Train C: AdaLoss (alpha-modulated CE) ===")
+        train_classifier_adaloss(
+            train_loader,
+            clf_repair,
+            unet,
+            alpha_head,
+            device,
+            rng,
+            train_modes,
+            args.epochs,
+            args.lr,
+            args.alpha_min,
+            args.alpha_max,
+            args.oracle,
+        )
     if mix_loader is not None:
         print("\n=== Train D: mixed (clean+corrupt+repair) ===")
         train_classifier(mix_loader, clf_mix, device, args.epochs, args.lr)
@@ -350,7 +424,12 @@ def main() -> None:
     print("Train \\ Test | Clean | Corrupt Seen | Corrupt Unseen")
     print(f"Clean train  | {acc_clean_a:.4f} | {acc_seen_a:.4f} | {acc_unseen_a:.4f}")
     print(f"Corrupt train| {acc_clean_b:.4f} | {acc_seen_b:.4f} | {acc_unseen_b:.4f}")
-    label = "Alpha-repair" if args.gate2_mode == "repair" else "Alpha-weight"
+    if args.gate2_mode == "repair":
+        label = "Alpha-repair"
+    elif args.gate2_mode == "downweight":
+        label = "Alpha-weight"
+    else:
+        label = "AdaLoss"
     print(f"{label} | {acc_clean_c:.4f} | {acc_seen_c:.4f} | {acc_unseen_c:.4f}")
     if clf_mix is not None:
         acc_clean_d = eval_classifier(test_loader, clf_mix, device)
