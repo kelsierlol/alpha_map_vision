@@ -31,3 +31,16 @@ AdaLoss(0.3)| 0.4680 | 0.4460 | 0.4168
 - Lambda=0.2 improves corrupt-seen accuracy by +10.16 pts vs clean-train baseline, with a modest clean-accuracy drop (~3 pts).
 - Lambda=0.1 helps seen accuracy but hurts clean accuracy too much.
 - Lambda=0.3 underperforms lambda=0.2.
+
+## Mic-Drop Comparison (CE vs CE+AdaLoss)
+Baseline (CE only):
+- Clean: 0.5656
+- Corrupt seen: 0.3870
+- Corrupt unseen: 0.4633
+
+CE + AdaLoss (lambda=0.2):
+- Clean: 0.5358
+- Corrupt seen: 0.4896
+- Corrupt unseen: 0.4510
+
+Takeaway: AdaLoss delivers a **large corrupt-seen lift** (+10.26 pts) with a **small clean tradeoff** (~3 pts).
