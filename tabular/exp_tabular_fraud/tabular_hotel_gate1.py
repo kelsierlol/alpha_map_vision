@@ -94,6 +94,14 @@ def stats(arr: np.ndarray) -> dict:
     }
 
 
+def batch_status(flag_rate: float, warn: float = 0.10, block: float = 0.25) -> str:
+    if flag_rate >= block:
+        return "BLOCK"
+    if flag_rate >= warn:
+        return "WARN"
+    return "PASS"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gate 1 tabular drift demo on hotel booking dataset.")
     parser.add_argument("--reference-path", type=str, default=Config.reference_path)
@@ -212,6 +220,13 @@ def main() -> None:
             "apply_winsor": cfg.apply_winsor,
         },
     }
+    report["status"] = {
+        "analysis": batch_status(report["flag_rate"]["analysis"]),
+        "warn_threshold": 0.10,
+        "block_threshold": 0.25,
+    }
+    worst_idx = np.argsort(-s_an)[:5].tolist()
+    report["top_worst_rows"] = {"analysis_idx": worst_idx}
 
     os.makedirs(os.path.dirname(cfg.output_json), exist_ok=True)
     with open(cfg.output_json, "w", encoding="utf-8") as f:

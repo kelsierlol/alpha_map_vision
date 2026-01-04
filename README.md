@@ -6,6 +6,7 @@ Small, fast demo to show alpha heatmaps lighting up corrupted patches on real-wo
 - Vision Gate 1+2: `vision/reports/GATE1_REPORT.md`, `vision/reports/GATE2_REPORT.md`
 - Sensor (CMAPSS) Gate 1+2: `timeseries/reports/CMAPSS_REPORT.md`
 - Tabular (CreditCard) Gate 1: `tabular/reports/TABULAR_FRAUD_REPORT.md`
+- Tabular (Hotel Booking) Gate 1: `tabular/reports/TABULAR_HOTEL_GATE1_REPORT.md`
 
 ## What it does
 - Trains a tiny UNet-style autoencoder on CIFAR-10 images.

@@ -36,5 +36,13 @@ Notes:
 - One-hot encoding + winsor can over-smooth drift and reduce signal.
 - No winsorization causes extreme residual blow-ups on this dataset.
 
+## Batch Health (Example Output)
+SafeLoop Batch Report
+---------------------
+Batch: hotel_booking_analysis_march.csv  
+Status: WARN  
+Flagged: 11.9% (threshold: 10%)  
+Recommendation: Review flagged rows before retraining.
+
 Artifacts:
 - JSON: `outputs/tabular_hotel_gate1.json` (not committed; generated locally)
