@@ -23,11 +23,13 @@ class Config:
     epochs_clf: int = 10
     batch_size: int = 512
     lr: float = 1e-3
-    alpha_min: float = -5.0
+    alpha_min: float = -3.0
     alpha_max: float = 1.9
     alpha0: float = 1.0
-    lambda_adaloss: float = 0.2
+    lambda_adaloss: float = 0.1
     reg_lambda: float = 0.01
+    tail_quantile: float = 0.95
+    apply_on_negative_only: bool = True
     output_json: str = "outputs/tabular_gate2_adaloss_controller.json"
 
 
@@ -161,6 +163,9 @@ def main() -> None:
     parser.add_argument("--alpha0", type=float, default=Config.alpha0)
     parser.add_argument("--lambda-adaloss", type=float, default=Config.lambda_adaloss)
     parser.add_argument("--reg-lambda", type=float, default=Config.reg_lambda)
+    parser.add_argument("--tail-quantile", type=float, default=Config.tail_quantile)
+    parser.add_argument("--apply-on-negative-only", action="store_true", default=Config.apply_on_negative_only)
+    parser.add_argument("--no-apply-on-negative-only", action="store_false", dest="apply_on_negative_only")
     parser.add_argument("--seed", type=int, default=Config.seed)
     parser.add_argument("--output-json", type=str, default=Config.output_json)
     args = parser.parse_args()
@@ -181,6 +186,8 @@ def main() -> None:
         alpha0=args.alpha0,
         lambda_adaloss=args.lambda_adaloss,
         reg_lambda=args.reg_lambda,
+        tail_quantile=args.tail_quantile,
+        apply_on_negative_only=args.apply_on_negative_only,
         output_json=args.output_json,
     )
 
@@ -287,6 +294,12 @@ def main() -> None:
     controller = AlphaController(hidden=16, alpha_min=cfg.alpha_min, alpha_max=cfg.alpha_max, alpha0=cfg.alpha0).to(device)
     opt_ada = torch.optim.Adam(list(clf_ada.parameters()) + list(controller.parameters()), lr=cfg.lr)
     ae.eval()
+    # Residual tail threshold from clean train slice
+    ae.eval()
+    with torch.no_grad():
+        s_train = residual_score(ae, torch.from_numpy(x_train_n).to(device)).cpu().numpy()
+    tail = float(np.quantile(s_train, cfg.tail_quantile))
+
     for epoch in range(1, cfg.epochs_clf + 1):
         total = 0.0
         clf_ada.train()
@@ -298,10 +311,14 @@ def main() -> None:
             with torch.no_grad():
                 recon = ae(xb)
                 resid_mag = (recon - xb).pow(2).mean(dim=1, keepdim=True).detach()
-            alpha = controller(resid_mag, tb)
+            resid_scaled = (resid_mag / (tail + 1e-6)).clamp_min(0.0)
+            resid_score = torch.log1p(resid_scaled)
+            alpha = controller(resid_score, tb)
             logits = clf_ada(xb)
             ce = F.binary_cross_entropy_with_logits(logits, yb, reduction="none")
             ada = barron_loss(ce, alpha).squeeze()
+            if cfg.apply_on_negative_only:
+                ada = ada * (1.0 - yb)
             reg = (alpha - cfg.alpha0).abs().mean()
             loss = (ce + cfg.lambda_adaloss * ada).mean() + cfg.reg_lambda * reg
             opt_ada.zero_grad(set_to_none=True)
