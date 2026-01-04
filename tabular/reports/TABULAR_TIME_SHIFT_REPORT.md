@@ -23,6 +23,7 @@ Threshold (target FPR=5%): 0.0191
 ### Baseline (no schema change)
 Flag rates:
 - Train (clean): 5.0%
+- Holdout (clean split-B): 5.6%
 - Mid: 36.8%
 - Late: 93.4%
 
@@ -43,6 +44,7 @@ Fraud proxy (Class=1 rows; unsupervised sanity check):
 
 ## Interpretation (Concise)
 - Clean-FPR calibration behaves as expected (≈5% on training slice).
+- Split-A/B stability holds (holdout clean slice stays near 5%).
 - Even without schema change, later time slices drift away from early slice (preflight warning).
 - With schema change, late slice scores jump sharply (p99 explodes), giving a clear “block” signal.
 

@@ -17,6 +17,7 @@ class Config:
     seed: int = 7
     max_rows: int = 200000
     train_quantile: float = 0.6
+    holdout_quantile: float = 0.7
     mid_quantile: float = 0.8
     epochs: int = 5
     batch_size: int = 512
@@ -101,6 +102,7 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=Config.lr)
     parser.add_argument("--seed", type=int, default=Config.seed)
     parser.add_argument("--train-quantile", type=float, default=Config.train_quantile)
+    parser.add_argument("--holdout-quantile", type=float, default=Config.holdout_quantile)
     parser.add_argument("--mid-quantile", type=float, default=Config.mid_quantile)
     parser.add_argument("--threshold-quantile", type=float, default=Config.threshold_quantile)
     parser.add_argument("--target-fpr", type=float, default=Config.target_fpr)
@@ -117,6 +119,7 @@ def main() -> None:
         seed=args.seed,
         max_rows=args.max_rows,
         train_quantile=args.train_quantile,
+        holdout_quantile=args.holdout_quantile,
         mid_quantile=args.mid_quantile,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -142,13 +145,16 @@ def main() -> None:
 
     # Define time cutoffs
     t0 = np.quantile(t_n, cfg.train_quantile)
+    t_holdout = np.quantile(t_n, cfg.holdout_quantile)
     t1 = np.quantile(t_n, cfg.mid_quantile)
 
     train_mask = t_n <= t0
-    mid_mask = (t_n > t0) & (t_n <= t1)
+    holdout_mask = (t_n > t0) & (t_n <= t_holdout)
+    mid_mask = (t_n > t_holdout) & (t_n <= t1)
     late_mask = t_n > t1
 
     x_train = x_n[train_mask]
+    x_holdout = x_n[holdout_mask]
     x_mid = x_n[mid_mask]
     x_late = x_n[late_mask]
 
@@ -161,6 +167,7 @@ def main() -> None:
 
     # Normalize using train split
     x_train_n = normalize_train(x_train, x_train)
+    x_holdout_n = normalize_train(x_train, x_holdout)
     x_mid_n = normalize_train(x_train, x_mid)
     x_late_n = normalize_train(x_train, x_late_eval)
 
@@ -187,6 +194,7 @@ def main() -> None:
     model.eval()
     with torch.no_grad():
         s_train = residual_score(model, torch.from_numpy(x_train_n).to(device)).cpu().numpy()
+        s_holdout = residual_score(model, torch.from_numpy(x_holdout_n).to(device)).cpu().numpy()
         s_mid = residual_score(model, torch.from_numpy(x_mid_n).to(device)).cpu().numpy()
         s_late = residual_score(model, torch.from_numpy(x_late_n).to(device)).cpu().numpy()
 
@@ -197,15 +205,17 @@ def main() -> None:
     report = {
         "config": asdict(cfg),
         "device": str(device),
-        "counts": {"train": int(len(s_train)), "mid": int(len(s_mid)), "late": int(len(s_late))},
+        "counts": {"train": int(len(s_train)), "holdout": int(len(s_holdout)), "mid": int(len(s_mid)), "late": int(len(s_late))},
         "threshold": {"quantile": cfg.threshold_quantile, "target_fpr": cfg.target_fpr, "value": thresh},
         "scores": {
             "train": stats(s_train),
+            "holdout": stats(s_holdout),
             "mid": stats(s_mid),
             "late": stats(s_late),
         },
         "flag_rate": {
             "train": float((s_train >= thresh).mean()),
+            "holdout": float((s_holdout >= thresh).mean()),
             "mid": float((s_mid >= thresh).mean()),
             "late": float((s_late >= thresh).mean()),
         },
