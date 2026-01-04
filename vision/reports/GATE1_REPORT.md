@@ -39,3 +39,11 @@ Unseen corruptions:
 - Gate 1 is stable across seeds with tight variance.
 - Performance generalizes to unseen corruptions with **no collapse** in PR-AUC or IoU.
 - Unseen FPR@90 is low (≈0.11), indicating practical gating potential on new corruption types.
+
+## Calibration (Clean FPR Target)
+Using `--target-fpr 0.05` on clean calibration batches:
+- Calibrated threshold: 0.2878
+- Observed clean FPR: 0.0500
+- Flagged @ calibrated threshold (seen corruptions): 0.4331
+
+Takeaway: we can enforce a clean false-positive budget and still flag a large fraction of corrupted pixels.
