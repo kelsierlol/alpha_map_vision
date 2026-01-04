@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 from dataclasses import asdict, dataclass
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -24,19 +24,22 @@ def normalize_train(x_train: np.ndarray, x: np.ndarray) -> np.ndarray:
     return (x - mean) / std
 
 
-def corrupt_batch(x: torch.Tensor, mode: str = "drift", rng: torch.Generator | None = None) -> Tuple[torch.Tensor, torch.Tensor]:
+def corrupt_batch(x: torch.Tensor, mode: str, rng: torch.Generator | None) -> Tuple[torch.Tensor, torch.Tensor]:
     bsz, dim = x.shape
     x_corr = x.clone()
     mask = torch.zeros_like(x_corr)
     if mode == "drift":
-        scale = torch.rand((bsz, dim), device=x.device, generator=rng) * 0.5 + 1.5  # 1.5..2.0
+        # softer drift: 1.1..1.3
+        scale = (0.2 * torch.rand((bsz, dim), device=x.device, generator=rng)) + 1.1
         x_corr = x_corr * scale
         mask = torch.ones_like(x_corr)
     elif mode == "stuck":
-        frac = 0.2
-        n_feats = int(dim * frac)
+        # softer stuck: replace 5-10% of features with near-mean value (0.1*noise)
+        frac = 0.1
+        n_feats = max(1, int(dim * frac))
         idx = torch.randperm(dim, generator=rng, device=x.device)[:n_feats]
-        x_corr[:, idx] = 0.0
+        noise = 0.1 * torch.randn((bsz, n_feats), device=x.device, generator=rng)
+        x_corr[:, idx] = noise
         mask[:, idx] = 1.0
     else:
         raise ValueError(f"Unknown mode {mode}")
@@ -57,7 +60,7 @@ class AE1D(nn.Module):
         return self.dec(self.enc(x))
 
 
-def stats(arr: np.ndarray) -> dict:
+def stats(arr: np.ndarray) -> Dict[str, float]:
     return {
         "mean": float(arr.mean()),
         "median": float(np.median(arr)),
@@ -66,16 +69,28 @@ def stats(arr: np.ndarray) -> dict:
     }
 
 
+def pr_auc(scores: np.ndarray, labels: np.ndarray) -> float:
+    order = np.argsort(-scores)
+    labels_sorted = labels[order]
+    tp = np.cumsum(labels_sorted)
+    fp = np.cumsum(1 - labels_sorted)
+    precision = tp / np.maximum(tp + fp, 1e-12)
+    recall = tp / np.maximum(labels_sorted.sum(), 1e-12)
+    trap = getattr(np, "trapezoid", np.trapz)
+    return float(trap(precision, recall))
+
+
 def main():
-    parser = argparse.ArgumentParser(description="CMAPSS Gate1: train clean 70%, corrupt last 30% with holdout corruption")
+    parser = argparse.ArgumentParser(description="CMAPSS Gate1: train clean 70%, corrupt last 30% (softer) and window-level flag")
     parser.add_argument("--data-path", type=str, default="data/train_FD001.txt")
     parser.add_argument("--train-frac", type=float, default=0.7)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--epochs", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--target-fpr", type=float, default=0.05)
     parser.add_argument("--corrupt-mode", type=str, default="drift", choices=["drift", "stuck"])
+    parser.add_argument("--window", type=int, default=10)
     parser.add_argument("--output", type=str, default="outputs/gate1_cmapss_holdout_corrupt.json")
     args = parser.parse_args()
 
@@ -122,39 +137,45 @@ def main():
     else:
         thresh = float(np.quantile(s_train, 0.99))
 
-    # Corrupt the held-out slice
     x_eval_t = torch.from_numpy(x_eval_n).to(device)
     x_corr, mask = corrupt_batch(x_eval_t, mode=args.corrupt_mode, rng=rng)
     with torch.no_grad():
         s_eval = ((model(x_corr) - x_corr).pow(2).mean(dim=1)).cpu().numpy()
-    mask_flat = mask.mean(dim=1).cpu().numpy() > 0  # any feature corrupted → mark row
-    labels = mask_flat.astype(np.int64)
+    mask_row = (mask.mean(dim=1) > 0).cpu().numpy().astype(np.int64)
 
-    def pr_auc(scores: np.ndarray, labels: np.ndarray) -> float:
-        order = np.argsort(-scores)
-        labels_sorted = labels[order]
-        tp = np.cumsum(labels_sorted)
-        fp = np.cumsum(1 - labels_sorted)
-        precision = tp / np.maximum(tp + fp, 1e-12)
-        recall = tp / np.maximum(labels_sorted.sum(), 1e-12)
-        trap = getattr(np, "trapezoid", np.trapz)
-        return float(trap(precision, recall))
+    # Window aggregation
+    win = args.window
+    def to_windows(arr: np.ndarray) -> np.ndarray:
+        n = len(arr)
+        m = n // win
+        return arr[: m * win].reshape(m, win).mean(axis=1)
 
-    scores = s_eval
-    labels = labels
-    pr = pr_auc(scores, labels) if labels.sum() > 0 else 0.0
-    thresh_detect = np.quantile(scores, 1.0 - args.target_fpr) if args.target_fpr > 0 else thresh
-    flag_rate = float((scores >= thresh_detect).mean())
+    s_train_w = to_windows(s_train)
+    s_eval_w = to_windows(s_eval)
+    mask_w = to_windows(mask_row).round().astype(np.int64)
+
+    # Detection threshold at row-level (same as train FPR), applied to windows
+    thresh_w = np.quantile(s_train_w, 1.0 - args.target_fpr) if args.target_fpr > 0 else np.quantile(s_train_w, 0.99)
+    flag_rate_train = float((s_train_w >= thresh_w).mean())
+    flag_rate_eval = float((s_eval_w >= thresh_w).mean())
+    pr = pr_auc(s_eval_w, mask_w) if mask_w.sum() > 0 else 0.0
 
     report = {
         "config": vars(args),
         "device": str(device),
-        "counts": {"train": int(len(s_train)), "eval": int(len(scores))},
-        "threshold": {"target_fpr": args.target_fpr, "train_value": thresh, "detect_value": float(thresh_detect)},
-        "scores": {"train": stats(s_train), "eval": stats(scores)},
-        "flag_rate": {"train": float((s_train >= thresh).mean()), "eval": flag_rate},
+        "counts": {"train_rows": int(len(s_train)), "eval_rows": int(len(s_eval)), "train_windows": int(len(s_train_w)), "eval_windows": int(len(s_eval_w))},
+        "threshold": {"target_fpr": args.target_fpr, "row_value": thresh, "window_value": float(thresh_w)},
+        "scores": {
+            "train_row": stats(s_train),
+            "eval_row": stats(s_eval),
+            "train_window": stats(s_train_w),
+            "eval_window": stats(s_eval_w),
+        },
+        "flag_rate": {
+            "train_window": flag_rate_train,
+            "eval_window": flag_rate_eval,
+        },
         "pr_auc": pr,
-        "mask_positives": int(labels.sum()),
     }
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)

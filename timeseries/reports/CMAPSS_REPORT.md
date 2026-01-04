@@ -25,18 +25,19 @@ Script: `timeseries/exp_sensor_dropouts/gate1_cmapss_holdout_corrupt.py`
 Data: `/Users/prajwal/Projects/supervised_rl/data/train_FD001.txt`  
 Split: first 70% clean train, last 30% eval with injected corruption
 
-Drift corruption:
-- Threshold (train FPR=5%): train 0.04236, detect 0.19278
-- Flag rate: train 5.01%, eval 5.01%
-- PR-AUC: 0.9998 (mask vs score)
+Soft drift (window-level, 10-step windows):
+- Threshold (train FPR=5%): window 0.02541
+- Flag rate: train 5.06%, eval 63.8%
+- PR-AUC: 0.9984
 
-Stuck-at corruption:
-- Threshold (train FPR=5%): train 0.04236, detect 0.18872
-- Flag rate: train 5.01%, eval 5.01%
-- PR-AUC: 0.9998
+Soft stuck-at (window-level, 10-step windows):
+- Threshold (train FPR=5%): window 0.02541
+- Flag rate: train 5.06%, eval 100%
+- PR-AUC: 0.9984
 
 Interpretation:
-- On this split, the detection threshold stays at the clean-calibrated FPR, and the high PR-AUC reflects that the injected corruption is easily separable without raising the flag rate. For a more realistic signal, drift/stuck parameters may need to be weakened or drift measured at per-feature granularity.
+- Softer corruptions plus window aggregation produce a more realistic gate signal (flag rate rises well above clean FPR).
+- Stuck-at remains very separable; for production realism, corruption severity should be tuned further.
 
 ## Gate 2 (RUL Impact, Official Split)
 Backbone: TCNRegressor (1D conv, hidden=128)  
