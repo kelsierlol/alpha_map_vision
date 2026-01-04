@@ -5,34 +5,33 @@ Demonstrate a product-style **preflight QA gate**:
 - Train an unsupervised residual baseline on an earlier “known-good” time slice.
 - Score later time slices and flag rows that exceed a high quantile threshold from training.
 
-Dataset: `exp_tabular_fraud/data/creditcard.csv` (normal transactions only for training).
+Dataset: `tabular/exp_tabular_fraud/data/creditcard.csv` (normal transactions only for training).
 
-Implementation: `exp_tabular_fraud/tabular_time_shift_demo.py`
+Implementation: `tabular/exp_tabular_fraud/tabular_time_shift_demo.py`
 
 ## Setup
 - Model: MLP autoencoder (MSE)
 - Train data: normal transactions (`Class=0`) from earliest time slice (<= train_quantile)
-- Threshold: train residual p99
+- Threshold: calibrated to clean FPR (target 5%)
 - Scoring: per-row residual energy (mean squared residual)
 - max_rows: 200k
-- epochs: 3
+- epochs: 5
 
-## Results
-Threshold: train p99 = 0.0941
+## Results (clean-FPR calibrated, schema change on)
+Threshold (target FPR=5%): 0.0191
 
-### Natural time drift (no injected schema change)
-- Flag rate (train): 1.0% (by definition)
-- Flag rate (mid): 12.7%
-- Flag rate (late): 14.6%
+Flag rates:
+- Train (clean): 5.0%
+- Mid: 36.8%
+- Late (schema-shifted): 97.1%
 
-### Simulated schema change (scale `Amount` in late slice by 5×)
-- Flag rate (train): 1.0%
-- Flag rate (mid): 12.7%
-- Flag rate (late): 31.7%
+Fraud proxy (Class=1 rows; unsupervised sanity check):
+- Flag rate: 89.6%
 
 ## Interpretation (Concise)
-- Even without injected changes, later time slices deviate from the early slice (preflight warning signal).
-- With an upstream “schema change” style perturbation, SafeLoop flags a much larger fraction of the late batch (preflight block signal).
+- Clean-FPR calibration behaves as expected (≈5% on training slice).
+- Mid and late slices show strong drift relative to early slice.
+- With a simulated schema shift, late slice is almost entirely flagged → clear “block” signal.
 
 Artifacts:
 - JSON: `outputs/tabular_time_shift_report.json` (not committed; generated locally)
