@@ -152,7 +152,10 @@ def main() -> None:
             
             # Calculate residual magnitude and local redundancy
             resid_mag = (recon - corrupt).abs().mean(dim=1, keepdim=True).detach()
-            redundancy = local_redundancy(corrupt, args.redundancy_window).detach()
+            
+            # Convert corrupt to grayscale before calculating redundancy
+            grayscale_corrupt = transforms.Grayscale()(corrupt)
+            redundancy = local_redundancy(grayscale_corrupt, args.redundancy_window).detach()
             
             # Predict alpha map
             alpha = controller_alpha(resid_mag, redundancy)
