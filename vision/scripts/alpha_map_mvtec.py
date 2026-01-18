@@ -213,7 +213,10 @@ def main() -> None:
             
             # Calculate residual magnitude and local redundancy
             resid_mag = (recon - x).abs().mean(dim=1, keepdim=True)
-            redundancy = local_redundancy(x, args.redundancy_window) # Calculate redundancy on original test image
+            
+            # Convert x to grayscale before calculating redundancy
+            grayscale_x = transforms.Grayscale()(x)
+            redundancy = local_redundancy(grayscale_x, args.redundancy_window)
             
             # Predict alpha map
             alpha = controller_alpha(resid_mag, redundancy)
@@ -284,7 +287,8 @@ def main() -> None:
         with torch.no_grad():
             recon_example = model_unet(corrupt_example)
             resid_example = (recon_example - corrupt_example).abs().mean(dim=1, keepdim=True)
-            redundancy_example = local_redundancy(corrupt_example, args.redundancy_window)
+            grayscale_corrupt_example = transforms.Grayscale()(corrupt_example)
+            redundancy_example = local_redundancy(grayscale_corrupt_example, args.redundancy_window)
             alpha_example = controller_alpha(resid_example, redundancy_example)
             alpha_score_example = torch.sigmoid(alpha_example)
 
